@@ -2,6 +2,13 @@
 #include <cstring>
 // #include <charconv>
 
+#define STR1(x) #x
+#define STR(x) STR1(x)
+
+#define TEST(var) std::cout << \
+  "\033[33m" STR(__LINE__) ": " \
+  "\033[36m" #var ":\033[0m " << (var) << std::endl;
+
 namespace ivanp {
 namespace {
 
@@ -119,33 +126,28 @@ void match(const char* seq, const char* s, const char* end) {
 }
 
 parser_ret_t parse_node(const char* s, const char* end) {
-  s = skip_blank(s,end);
   switch (*s++) {
-    case 'n':
-      match("null",s,end);
-      return {{},s+3};
-    case 't':
-      match("true",s,end);
-      return {true,s+3};
-    case 'f':
-      match("false",s,end);
-      return {false,s+4};
     case '"':
       return parse_string(s,end);
     case '[': {
       json::array_t arr;
       s = skip_blank(s,end);
-      for (bool not_last=(*s!=']'); not_last; ++s) {
-        auto [val,s2] = parse_node(s,end);
-        s = skip_blank(s2,end);
-        switch (*s) {
-          case ']':
-            not_last = false;
-          case ',':
-            arr.emplace_back(std::move(val));
-            break;
-          default:
-            throw json::error("expected , or ]");
+      for (char p='[';;) {
+        char c = *s;
+        if (c==']') {
+          if (p==',') throw json::error("unexpected ]");
+          ++s;
+          break;
+        } else if (c==',') {
+          if (p) throw json::error("unexpected ,");
+          s = skip_blank(s+1,end);
+          p = ',';
+        } else {
+          if (!p) throw json::error("expected , or ]");
+          auto [val,s2] = parse_node(s,end);
+          s = skip_blank(s2,end);
+          arr.emplace_back(std::move(val));
+          p = '\0';
         }
       }
       return {std::move(arr),s};
@@ -161,7 +163,8 @@ parser_ret_t parse_node(const char* s, const char* end) {
         s = skip_blank(s2,end);
         if (*s!=':')
           throw json::error("expected : after a key");
-        auto [val,s3] = parse_node(s+1,end);
+        s = skip_blank(s+1,end);
+        auto [val,s3] = parse_node(s,end);
         s = skip_blank(s3,end);
         switch (*s) {
           case '}':
@@ -192,15 +195,31 @@ parser_ret_t parse_node(const char* s, const char* end) {
     case '9':
     case '-':
       return parse_number(s-1,end);
+    case 'n':
+      match("null",s,end);
+      return {{},s+3};
+    case 't':
+      match("true",s,end);
+      return {true,s+3};
+    case 'f':
+      match("false",s,end);
+      return {false,s+4};
     default :
       throw json::error(std::string("invalid json token ")+*(s-1));
   }
 }
 
+parser_ret_t parse_first_node(const char* s, const char* end) {
+  return parse_node(skip_blank(s,end),end);
+}
+parser_ret_t parse_first_node(const char* s, size_t n) {
+  return parse_first_node(s,s+n);
+}
+
 } // end namespace
 
 json::json(std::string_view src)
-: node(parse_node(src.data(),src.data()+src.size()).node)
+: node(parse_first_node(src.data(),src.size()).node)
 { }
 
 const char* json::type_name() const {
